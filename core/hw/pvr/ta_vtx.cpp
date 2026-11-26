@@ -1331,7 +1331,7 @@ static void ta_parse_naomi2(TA_context* ctx, bool primRestart)
 // screen and the shadow becomes a black wedge. Each triangle is clipped to a band around the screen
 // (Sutherland-Hodgman, then a fan in the same winding). 1/w is affine in screen space, so the z of the
 // new vertices is exact, and no pixel inside the band changes its count of volume faces in front of it.
-static void clipModVolsToGuardBand(rend_context& rc)
+void ta_clip_modvols(rend_context& rc)
 {
 	constexpr float Band = 4096.f;
 	auto outside = [](float v) { return !(v >= -Band && v <= Band); };	// NaN counts as outside
@@ -1345,7 +1345,9 @@ static void clipModVolsToGuardBand(rend_context& rc)
 	if (!any)
 		return;
 
-	struct V { float x, y, z; };
+	// double between the planes: a vertex cut by one plane can still be ~1e9 px away, where a float is
+	// off by tens of pixels, and the next cut would move the edge on screen by as much
+	struct V { double x, y, z; };
 	// params of both lists, in the order of their triangles (a volume's params are contiguous)
 	std::vector<ModifierVolumeParam *> params;
 	for (ModifierVolumeParam& p : rc.global_param_mvo)
@@ -1383,10 +1385,10 @@ static void clipModVolsToGuardBand(rend_context& rc)
 			{
 				auto dist = [plane](const V& v) {
 					switch (plane) {
-					case 0: return (double)v.x + Band;
-					case 1: return (double)Band - v.x;
-					case 2: return (double)v.y + Band;
-					default: return (double)Band - v.y;
+					case 0: return v.x + Band;
+					case 1: return Band - v.x;
+					case 2: return v.y + Band;
+					default: return Band - v.y;
 					}
 				};
 				int m = 0;
@@ -1400,16 +1402,15 @@ static void clipModVolsToGuardBand(rend_context& rc)
 					if ((da >= 0) != (db >= 0))
 					{
 						const double s = da / (da - db);
-						tmp[m++] = { (float)(a.x + (b.x - (double)a.x) * s), (float)(a.y + (b.y - (double)a.y) * s),
-								(float)(a.z + (b.z - (double)a.z) * s) };
+						tmp[m++] = { a.x + (b.x - a.x) * s, a.y + (b.y - a.y) * s, a.z + (b.z - a.z) * s };
 					}
 				}
 				n = m;
 				std::copy(tmp, tmp + n, poly);
 			}
 			for (int k = 1; k + 1 < n; k++)
-				out.push_back({ poly[0].x, poly[0].y, poly[0].z, poly[k].x, poly[k].y, poly[k].z,
-						poly[k + 1].x, poly[k + 1].y, poly[k + 1].z });
+				out.push_back({ (float)poly[0].x, (float)poly[0].y, (float)poly[0].z, (float)poly[k].x, (float)poly[k].y,
+						(float)poly[k].z, (float)poly[k + 1].x, (float)poly[k + 1].y, (float)poly[k + 1].z });
 		}
 		// The renderers skip a param with no triangles, and with it the summing of its volume: one with all
 		// its triangles clipped away keeps a triangle of no area, which covers no pixel.
@@ -1428,7 +1429,7 @@ void ta_parse(TA_context *ctx, bool primRestart)
 	else
 	{
 		ta_parse_vdrc(ctx, primRestart);
-		clipModVolsToGuardBand(ctx->rend);
+		ta_clip_modvols(ctx->rend);
 	}
 }
 
